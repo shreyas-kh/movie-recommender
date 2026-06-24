@@ -1,0 +1,18 @@
+# Model artifacts
+models/svd_model.pkl
+
+# Secrets
+.streamlit/secrets.toml
+
+# Python
+__pycache__/
+*.py[cod]
+.env
+venv/
+.venv/
+
+# Jupyter
+.ipynb_checkpoints/
+.claude/
+.DS_Store
+**/.DS_Store
