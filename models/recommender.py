@@ -3,13 +3,17 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
+from scipy.sparse import csr_matrix
 from sklearn.decomposition import TruncatedSVD
 
 
 class SVDRecommender:
     def __init__(self, n_components: int = 50):
         self.n_components = n_components
-        self.svd = TruncatedSVD(n_components=n_components, random_state=42)
+        # algorithm='arpack' avoids the randomized path's final DGEMM call
+        # (U = Q @ Uhat) which triggers spurious BLAS RuntimeWarnings on macOS
+        # even when all inputs and outputs are numerically clean.
+        self.svd = TruncatedSVD(n_components=n_components, algorithm="arpack")
         self.user_ids: List = []
         self.movie_ids: List = []
         self.user_index: Dict = {}
@@ -24,13 +28,32 @@ class SVDRecommender:
         self.movie_ids = list(matrix.columns)
         self.user_index = {uid: i for i, uid in enumerate(self.user_ids)}
 
-        self.user_mean = matrix.mean(axis=1).values
-        centered = matrix.sub(matrix.mean(axis=1), axis=0).fillna(0).values
+        user_means = matrix.mean(axis=1)  # skipna=True: valid for every user
+        self.user_mean = user_means.values
 
-        self.svd.fit(centered)
-        reconstructed = self.svd.inverse_transform(self.svd.transform(centered))
-        self.predicted = reconstructed + self.user_mean[:, np.newaxis]
+        # Center only the rated entries, then build a sparse matrix.
+        # fillna(0) on the full pivot frame (610×9724 for ml-latest-small,
+        # ~98% zeros) and passing that dense array to randomized SVD triggers
+        # spurious BLAS RuntimeWarnings during the final U = Q @ Uhat step.
+        # stack() drops NaN by default, so we only store the ~100k rated
+        # entries and let the rest stay implicit zeros.
+        centered = matrix.sub(user_means, axis=0)
+        stacked = centered.stack()
 
+        movie_to_col = {mid: j for j, mid in enumerate(self.movie_ids)}
+        row_idx = np.array([self.user_index[uid] for uid, _ in stacked.index])
+        col_idx = np.array([movie_to_col[mid] for _, mid in stacked.index])
+
+        sparse_centered = csr_matrix(
+            (stacked.values.astype(np.float64), (row_idx, col_idx)),
+            shape=(len(self.user_ids), len(self.movie_ids)),
+        )
+
+        self.svd.fit(sparse_centered)
+        self.predicted = (
+            self.svd.inverse_transform(self.svd.transform(sparse_centered))
+            + self.user_mean[:, np.newaxis]
+        )
         self.rated_mask = ~matrix.isna().values
         return self
 
