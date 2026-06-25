@@ -127,6 +127,14 @@ def main():
     st.title("🎬 Movie Recommender")
     st.caption("Collaborative filtering with SVD · MovieLens latest-small (~100k ratings)")
 
+    st.info(
+        "👋 **New here?** This app holds 610 real users, each with their own "
+        "movie-watching history and taste. Pick a User ID (or a persona) from the "
+        "sidebar to explore someone's preferences and see what the model recommends "
+        "for them. Try a few different users — the picks shift with each person's "
+        "rating patterns, and the sidebar chart shows what kind of viewer they are."
+    )
+
     with st.expander("How it works", expanded=False):
         st.markdown(
             """
