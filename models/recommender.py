@@ -31,21 +31,28 @@ class SVDRecommender:
         user_means = matrix.mean(axis=1)  # skipna=True: valid for every user
         self.user_mean = user_means.values
 
-        # Center only the rated entries, then build a sparse matrix.
-        # fillna(0) on the full pivot frame (610×9724 for ml-latest-small,
-        # ~98% zeros) and passing that dense array to randomized SVD triggers
-        # spurious BLAS RuntimeWarnings during the final U = Q @ Uhat step.
-        # stack() drops NaN by default, so we only store the ~100k rated
-        # entries and let the rest stay implicit zeros.
+        # Center only the rated entries, then build a sparse matrix. fillna(0)
+        # on the full pivot frame (610×9724 for ml-latest-small, ~98% zeros)
+        # and passing that dense array to randomized SVD triggers spurious BLAS
+        # RuntimeWarnings during the final U = Q @ Uhat step, so we keep only the
+        # ~100k rated entries and let the rest stay implicit zeros.
         centered = matrix.sub(user_means, axis=0)
         stacked = centered.stack()
+
+        # stack() dropped NaN (unrated cells) by default on older pandas, but
+        # newer pandas (Streamlit Cloud's Python 3.14) keeps them — which feeds
+        # NaN into csr_matrix and makes SVD's _assert_all_finite raise. Filter
+        # to finite values explicitly so this holds on every version; isfinite
+        # drops both NaN and inf in one pass.
+        finite = np.isfinite(stacked.to_numpy())
+        stacked = stacked[finite]
 
         movie_to_col = {mid: j for j, mid in enumerate(self.movie_ids)}
         row_idx = np.array([self.user_index[uid] for uid, _ in stacked.index])
         col_idx = np.array([movie_to_col[mid] for _, mid in stacked.index])
 
         sparse_centered = csr_matrix(
-            (stacked.values.astype(np.float64), (row_idx, col_idx)),
+            (stacked.to_numpy().astype(np.float64), (row_idx, col_idx)),
             shape=(len(self.user_ids), len(self.movie_ids)),
         )
 
