@@ -1,19 +1,26 @@
 """
 Run from the project root:
-    python models/train.py
+    python models/train.py                  # temporal (per-user chronological) split
+    python models/train.py --split random   # original shuffled split, for comparison
 
 Evaluates SVD with an 80/20 train/test split (prints RMSE), then trains the
 final model on the full ml-latest-small dataset and saves models/svd_model.pkl.
+
+The temporal split is the realistic protocol: each user's earliest 80% of
+ratings train the model, their most recent 20% are held out — the model never
+sees a user's future. The random split leaks future ratings into training and
+therefore reports flattering numbers; it is kept only for comparison.
 """
+import argparse
 import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import train_test_split
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from models.recommender import SVDRecommender
+from models.split import split_ratings
 
 DATA_DIR = Path(__file__).parent.parent / "data" / "raw"
 MODEL_PATH = Path(__file__).parent / "svd_model.pkl"
@@ -41,13 +48,22 @@ def rmse(model: SVDRecommender, eval_df: pd.DataFrame):
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Train + evaluate the SVD recommender.")
+    parser.add_argument(
+        "--split", choices=["temporal", "random"], default="temporal",
+        help="temporal = per-user chronological 80/20 (realistic, default); "
+             "random = shuffled split (leaks future ratings; for comparison)",
+    )
+    args = parser.parse_args()
+
     print("Loading ratings...")
     ratings = pd.read_csv(DATA_DIR / "ratings.csv")
     print(f"  {len(ratings):,} ratings | {ratings['userId'].nunique()} users | {ratings['movieId'].nunique()} movies")
 
     # --- Evaluation: fit on 80%, score held-out 20% --------------------------
-    train_df, test_df = train_test_split(ratings, test_size=0.2, random_state=42)
-    print(f"\nEvaluating on an 80/20 split (train={len(train_df):,}, test={len(test_df):,})...")
+    train_df, test_df = split_ratings(ratings, method=args.split, test_size=0.2, seed=42)
+    print(f"\nEvaluating on an 80/20 {args.split} split "
+          f"(train={len(train_df):,}, test={len(test_df):,})...")
     eval_model = SVDRecommender(n_components=N_COMPONENTS).fit(train_df)
 
     train_rmse, n_train, _ = rmse(eval_model, train_df)
